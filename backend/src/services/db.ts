@@ -4,9 +4,9 @@ import path from "path";
 const DB_PATH =
   process.env.DB_PATH || path.join(__dirname, "..", "..", "data", "streams.db");
 
-let db: Database.Database;
+let db: any;
 
-export function getDb(): Database.Database {
+export function getDb(): any {
   if (!db) {
     throw new Error("Database not initialized. Call initDb() first.");
   }

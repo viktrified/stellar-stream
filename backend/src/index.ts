@@ -5,7 +5,9 @@ import express, { Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { z } from "zod";
 import { swaggerDocument } from "./swagger";
+import { getStreamHistory } from "./services/eventHistory";
 import { fetchOpenIssues } from "./services/openIssues";
+import { initIndexer, startIndexer } from "./services/indexer";
 import {
   calculateProgress,
   cancelStream,
@@ -73,6 +75,7 @@ const listStreamsQuerySchema = z.object({
 });
 
 app.use(cors());
+app.use(requestLogger);
 app.use(express.json());
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
@@ -83,9 +86,22 @@ function sendValidationError(res: Response, issues: z.ZodIssue[]) {
   });
 }
 
-function parseStreamId(streamIdRaw: string):
+function parseStreamId(streamIdRaw: unknown):
   | { ok: true; value: string }
   | { ok: false; issues: z.ZodIssue[] } {
+  if (typeof streamIdRaw !== "string") {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "custom",
+          message: "Stream ID must be a string.",
+          path: ["id"],
+        },
+      ],
+    };
+  }
+
   const parsed = streamIdSchema.safeParse(streamIdRaw);
   if (!parsed.success) {
     return { ok: false, issues: parsed.error.issues };
@@ -239,7 +255,29 @@ app.post("/api/auth/token", (req: Request, res: Response) => {
   }
 });
 
+app.post("/api/streams", authMiddleware, async (req: Request, res: Response) => {
+  const parsedBody = createStreamPayloadWithAllowedAssetsSchema(ALLOWED_ASSETS).safeParse(
+    req.body,
+  );
+  if (!parsedBody.success) {
+    sendValidationError(res, parsedBody.error.issues);
+    return;
+  }
 
+  try {
+    const stream = await createStream(parsedBody.data);
+    res.status(201).json({
+      data: {
+        ...stream,
+        progress: calculateProgress(stream),
+      },
+    });
+  } catch (error: any) {
+    console.error("Failed to create stream:", error);
+    res.status(500).json({
+      error: error.message || "Failed to create stream.",
+      requestId: req.requestId,
+    });
   }
 });
 
@@ -300,6 +338,22 @@ app.patch(
     }
   },
 );
+
+app.get("/api/streams/:id/history", (req: Request, res: Response) => {
+  const parsedId = parseStreamId(req.params.id);
+  if (!parsedId.ok) {
+    sendValidationError(res, parsedId.issues);
+    return;
+  }
+
+  const stream = getStream(parsedId.value);
+  if (!stream) {
+    res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+    return;
+  }
+
+  res.json({ data: getStreamHistory(parsedId.value) });
+});
 
 app.get("/api/open-issues", async (_req: Request, res: Response) => {
   try {
