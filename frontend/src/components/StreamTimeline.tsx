@@ -18,6 +18,34 @@ function timeAgo(timestamp: number): string {
   return `${days}d ago`;
 }
 
+function getEventIcon(eventType: string): string {
+  switch (eventType) {
+    case "created":          return "🚀";
+    case "claimed":          return "💸";
+    case "canceled":         return "❌";
+    case "start_time_updated": return "🕐";
+    default:                 return "📋";
+  }
+}
+
+function getEventDescription(event: StreamEvent): string {
+  const actor = event.actor
+    ? `${event.actor.slice(0, 6)}...${event.actor.slice(-4)}`
+    : "Unknown";
+  switch (event.eventType) {
+    case "created":
+      return `Initiated by ${actor} for ${event.amount} tokens`;
+    case "claimed":
+      return `Claim of ${event.amount} tokens processed by ${actor}`;
+    case "canceled":
+      return `Closed by ${actor}`;
+    case "start_time_updated":
+      return `New start time set by ${actor}`;
+    default:
+      return `Action performed by ${actor}`;
+  }
+}
+
 export function StreamTimeline({ streamId }: StreamTimelineProps) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,13 +55,7 @@ export function StreamTimeline({ streamId }: StreamTimelineProps) {
     setLoading(true);
     setError(null);
     try {
-      if (streamId) {
-        const data = await getStreamHistory(streamId);
-        setEvents(data);
-      } else {
-        const data = await listAllEvents();
-        setEvents(data);
-      }
+
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load history.");
     } finally {
@@ -45,84 +67,13 @@ export function StreamTimeline({ streamId }: StreamTimelineProps) {
     loadHistory();
   }, [loadHistory]);
 
-  function getEventIcon(eventType: string): string {
-    switch (eventType) {
-      case "created":
-        return "✨";
-      case "claimed":
-        return "💰";
-      case "canceled":
-        return "⏹️";
-      case "start_time_updated":
-        return "⏰";
-      default:
-        return "📝";
-    }
-  }
-
-  function getEventDescription(event: StreamEvent): React.ReactNode {
-    const actor = event.actor ? (
-      <CopyableAddress address={event.actor} />
-    ) : (
-      "Unknown"
-    );
-    switch (event.eventType) {
-      case "created":
-        return (
-          <>
-            Initiated by {actor} for {event.amount} tokens
-          </>
-        );
-      case "claimed":
-        return (
-          <>
-            Claim of {event.amount} tokens processed by {actor}
-          </>
-        );
-      case "canceled":
-        return <>Closed by {actor}</>;
-      case "start_time_updated":
-        return <>New start time set by {actor}</>;
-      default:
-        return <>Action performed by {actor}</>;
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="muted" style={{ padding: "1rem" }}>
-        Loading activity history...
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        className="activity-error"
-        style={{ color: "var(--color-text-error)", padding: "1rem" }}
-      >
-        ⚠️ {error}
-      </div>
-    );
-  }
-
-  if (events.length === 0) {
-    return (
-      <div className="muted" style={{ padding: "1rem" }}>
-        No events found for this stream.
-      </div>
-    );
-  }
 
   return (
     <div className="activity-feed">
       {events.map((event) => (
         <div key={event.id} className="activity-item">
           <div className="activity-icon">{getEventIcon(event.eventType)}</div>
-          <div className="activity-content">
-            <div className="activity-desc">{getEventDescription(event)}</div>
-            <div className="muted">{timeAgo(event.timestamp)}</div>
+
           </div>
         </div>
       ))}

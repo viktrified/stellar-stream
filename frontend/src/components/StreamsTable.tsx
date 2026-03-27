@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Stream } from "../types/stream";
 import { getExportCsvUrl, ListStreamsFilters } from "../services/api";
 import { StreamTimeline } from "./StreamTimeline";
-import { CopyableAddress } from "./CopyableAddress";
+
 
 interface StreamsTableProps {
   streams: Stream[];
@@ -38,14 +38,9 @@ function formatTimestamp(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
 
-export const StreamsTable: React.FC<StreamsTableProps> = ({
-  filters,
-  onCancel,
-  onEditStartTime,
-  onFiltersChange,
-  streams,
-}) => {
-  // const exportUrl = getExportCsvUrl(filters);
+
+
+  const exportUrl = getExportCsvUrl(filters as Record<string, string>);
 
   const header = (
     <div
@@ -97,6 +92,9 @@ export const StreamsTable: React.FC<StreamsTableProps> = ({
                   stream.progress.status === "canceled";
                 const isExpanded = expandedStreamId === stream.id;
 
+                // Derive health badges for this stream
+                const healthBadges = getHealthBadges(stream);
+
                 return (
                   <>
                     <tr key={stream.id}>
@@ -147,9 +145,30 @@ export const StreamsTable: React.FC<StreamsTableProps> = ({
                         </div>
                       </td>
                       <td>
-                        <span className={statusClass(stream.progress.status)}>
-                          {stream.progress.status}
-                        </span>
+                        {/*
+                         * Status cell: core status label first, then health
+                         * badges below. Badges are purely additive and never
+                         * replace the status label.
+                         */}
+                        <div className="status-cell">
+                          <span className={statusClass(stream.progress.status)}>
+                            {stream.progress.status}
+                          </span>
+                          {healthBadges.length > 0 && (
+                            <div className="health-badge-row" role="list" aria-label="Health badges">
+                              {healthBadges.map((badge) => (
+                                <span
+                                  key={badge.key}
+                                  className={badge.cssClass}
+                                  title={badge.title}
+                                  role="listitem"
+                                >
+                                  {badge.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <div className="action-cell">
