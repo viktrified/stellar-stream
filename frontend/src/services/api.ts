@@ -132,3 +132,9 @@ export async function getStreamHistory(streamId: string): Promise<StreamEvent[]>
   const body = await parseResponse<{ data: StreamEvent[] }>(response);
   return body.data;
 }
+
+export async function listAllEvents(): Promise<StreamEvent[]> {
+  const response = await fetch(`${API_BASE}/events`);
+  const body = await parseResponse<{ data: StreamEvent[] }>(response);
+  return body.data;
+}

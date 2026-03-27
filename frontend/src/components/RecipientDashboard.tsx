@@ -39,18 +39,24 @@ export function RecipientDashboard({ recipientAddress }: RecipientDashboardProps
     setLoading(true);
     setError(null);
 
-    listStreams({ recipient: recipientAddress })
-      .then((data) => {
+    // Artificial testing delay
+    const delayThenLoad = async () => {
+      await new Promise(r => setTimeout(r, 1200));
+      if (!active) return;
+      
+      try {
+        const data = await listStreams({ recipient: recipientAddress });
         if (!active) return;
         setStreams(data);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Failed to load streams.");
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
+      }
+    };
+
+    delayThenLoad();
 
     return () => {
       active = false;
@@ -62,8 +68,10 @@ export function RecipientDashboard({ recipientAddress }: RecipientDashboardProps
     return (
       <div className="card recipient-dashboard-card">
         <h2 className="recipient-dashboard-title">Recipient Dashboard</h2>
-        <div className="recipient-dashboard-empty" role="status">
-          <p className="muted">
+        <div className="activity-empty">
+          <span className="activity-empty-icon">🔌</span>
+          <p>Wallet Not Connected</p>
+          <p className="muted" style={{ fontSize: '0.85rem' }}>
             Connect your wallet to see streams where you are the recipient.
           </p>
         </div>
@@ -76,9 +84,10 @@ export function RecipientDashboard({ recipientAddress }: RecipientDashboardProps
     return (
       <div className="card recipient-dashboard-card">
         <h2 className="recipient-dashboard-title">Recipient Dashboard</h2>
-        <div className="recipient-dashboard-loading" role="status" aria-busy="true">
-          <div className="loading-spinner" aria-hidden />
-          <p className="muted">Loading your streams…</p>
+        <div className="activity-feed">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton skeleton-item" style={{ height: '80px' }} />
+          ))}
         </div>
       </div>
     );
@@ -89,8 +98,10 @@ export function RecipientDashboard({ recipientAddress }: RecipientDashboardProps
     return (
       <div className="card recipient-dashboard-card">
         <h2 className="recipient-dashboard-title">Recipient Dashboard</h2>
-        <div className="recipient-dashboard-error" role="alert">
-          <p>{error}</p>
+        <div className="activity-error">
+          <span style={{ fontSize: "2rem", display: "block", marginBottom: "0.5rem" }}>⚠️</span>
+          <h3>Dashboard Load Failed</h3>
+          <p className="muted">{error}</p>
         </div>
       </div>
     );
@@ -117,8 +128,12 @@ export function RecipientDashboard({ recipientAddress }: RecipientDashboardProps
     return (
       <div className="card recipient-dashboard-card">
         <h2 className="recipient-dashboard-title">Recipient Dashboard</h2>
-        <div className="recipient-dashboard-empty" role="status">
-          <p className="muted">You have no streams as a recipient yet.</p>
+        <div className="activity-empty">
+          <span className="activity-empty-icon">🌊</span>
+          <p>No Streams Found</p>
+          <p className="muted" style={{ fontSize: '0.85rem' }}>
+            You have no active or completed streams as a recipient yet.
+          </p>
         </div>
       </div>
     );

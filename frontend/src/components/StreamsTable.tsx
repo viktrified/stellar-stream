@@ -34,7 +34,13 @@ export function StreamsTable({ streams, onCancel, onEditStartTime }: StreamsTabl
           <h2 style={{ margin: 0 }}>Live Streams</h2>
           <a href={getExportCsvUrl()} className="btn-ghost" download>Export CSV</a>
         </div>
-        <p className="muted">No streams yet. Create your first Stellar payment stream.</p>
+        <div className="activity-empty">
+          <span className="activity-empty-icon">💸</span>
+          <p>No Streams Yet</p>
+          <p className="muted" style={{ fontSize: '0.85rem' }}>
+            Create your first Stellar payment stream to see it here.
+          </p>
+        </div>
       </div>
     );
   }

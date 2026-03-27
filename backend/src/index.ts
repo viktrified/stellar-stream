@@ -5,7 +5,7 @@ import express, { Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { z } from "zod";
 import { swaggerDocument } from "./swagger";
-import { getStreamHistory } from "./services/eventHistory";
+import { getStreamHistory, getAllEvents } from "./services/eventHistory";
 import { fetchOpenIssues } from "./services/openIssues";
 import { initIndexer, startIndexer } from "./services/indexer";
 import {
@@ -363,6 +363,10 @@ app.get("/api/open-issues", async (_req: Request, res: Response) => {
     console.error("Failed to fetch open issues from proxy:", error);
     res.status(500).json({ error: error.message || "Failed to fetch open issues." });
   }
+});
+
+app.get("/api/events", (_req: Request, res: Response) => {
+  res.json({ data: getAllEvents(50) });
 });
 
 

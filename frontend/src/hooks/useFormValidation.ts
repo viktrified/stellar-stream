@@ -4,7 +4,7 @@ import {
   createStreamPayloadSchema,
   stellarAccountIdSchema,
   totalAmountSchema,
-} from "../../../backend/src/validation/schemas";
+} from "../validation/schemas";
 
 export function isStellarAccount(value: string): boolean {
   return STELLAR_ACCOUNT_REGEX.test(value.trim());

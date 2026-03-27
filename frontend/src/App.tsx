@@ -6,6 +6,7 @@ import { RecipientDashboard } from "./components/RecipientDashboard";
 import { StreamsTable } from "./components/StreamsTable";
 import { StreamMetricsChart } from "./components/StreamMetricsChart";
 import { WalletButton } from "./components/WalletButton";
+import { StreamTimeline } from "./components/StreamTimeline";
 import { useFreighter } from "./hooks/useFreighter";
 import {
   cancelStream,
@@ -46,6 +47,7 @@ function App() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [editingStream, setEditingStream] = useState<Stream | null>(null);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
 
   async function refreshStreams(): Promise<void> {
     const data = await listStreams();
@@ -57,6 +59,10 @@ function App() {
 
     async function bootstrap() {
       try {
+        setLoadingDashboard(true);
+        // Artificial delay to show skeletons
+        await new Promise(r => setTimeout(r, 1000));
+
         const [streamData, issueData] = await Promise.all([
           listStreams(),
           listOpenIssues(),
@@ -71,6 +77,8 @@ function App() {
             ? describeGlobalError(err.message)
             : "Failed to load StellarStream data. Please refresh and try again.",
         );
+      } finally {
+        if (active) setLoadingDashboard(false);
       }
     }
 
@@ -235,7 +243,12 @@ function App() {
         onEditStartTime={(stream) => setEditingStream(stream)} />
       </section>
 
-      <IssueBacklog issues={issues} />
+      <IssueBacklog issues={issues} loading={loadingDashboard} />
+
+      <section className="card" style={{ marginTop: '1rem' }}>
+        <h2 style={{ marginBottom: '1rem' }}>Recent Activity</h2>
+        <StreamTimeline />
+      </section>
 
       {/* Edit start-time modal — only rendered when a stream is being edited */}
       {editingStream && (
