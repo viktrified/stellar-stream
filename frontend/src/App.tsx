@@ -6,6 +6,7 @@ import { RecipientDashboard } from "./components/RecipientDashboard";
 import { StreamsTable } from "./components/StreamsTable";
 import { StreamMetricsChart } from "./components/StreamMetricsChart";
 import { WalletButton } from "./components/WalletButton";
+import { StreamTimeline } from "./components/StreamTimeline";
 import { useFreighter } from "./hooks/useFreighter";
 import {
   cancelStream,
@@ -47,26 +48,12 @@ function App() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [editingStream, setEditingStream] = useState<Stream | null>(null);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
 
 useEffect(() => {
   let active = true;
 
-  async function bootstrap() {
-    try {
-      const [streamData, issueData] = await Promise.all([
-        listStreams(filters), 
-        listOpenIssues(),
-      ]);
-      if (!active) return;
-      setStreams(streamData);
-      setIssues(issueData);
-    } catch (err) {
-      if (!active) return;
-      setGlobalError(
-        err instanceof Error
-          ? describeGlobalError(err.message)
-          : "Failed to load StellarStream data. Please refresh and try again.",
-      );
+
     }
   }
 
@@ -241,7 +228,12 @@ async function handleCancel(streamId: string): Promise<void> {
 />
       </section>
 
-      <IssueBacklog issues={issues} />
+      <IssueBacklog issues={issues} loading={loadingDashboard} />
+
+      <section className="card" style={{ marginTop: '1rem' }}>
+        <h2 style={{ marginBottom: '1rem' }}>Recent Activity</h2>
+        <StreamTimeline />
+      </section>
 
       {/* Edit start-time modal — only rendered when a stream is being edited */}
       {editingStream && (

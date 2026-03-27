@@ -2,9 +2,23 @@ import { OpenIssue } from "../types/stream";
 
 interface IssueBacklogProps {
   issues: OpenIssue[];
+  loading?: boolean;
 }
 
-export function IssueBacklog({ issues }: IssueBacklogProps) {
+export function IssueBacklog({ issues, loading }: IssueBacklogProps) {
+  if (loading) {
+    return (
+      <div className="card">
+        <h2>Maintainer Backlog</h2>
+        <div className="activity-feed">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skeleton skeleton-item" style={{ height: '100px' }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <h2>Maintainer Backlog</h2>
