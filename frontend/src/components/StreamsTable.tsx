@@ -3,6 +3,8 @@ import { Stream } from "../types/stream";
 import { getExportCsvUrl, ListStreamsFilters } from "../services/api";
 import { StreamTimeline } from "./StreamTimeline";
 
+import { getHealthBadges } from "../utils/streamHealthBadges";
+import { CopyableAddress } from "./CopyableAddress";
 
 interface StreamsTableProps {
   streams: Stream[];
@@ -38,8 +40,13 @@ function formatTimestamp(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
 
-
-
+export const StreamsTable = ({
+  streams,
+  filters,
+  onFiltersChange,
+  onCancel,
+  onEditStartTime,
+}: StreamsTableProps) => {
   const exportUrl = getExportCsvUrl(filters as Record<string, string>);
 
   const header = (
