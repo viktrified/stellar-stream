@@ -2,6 +2,9 @@ import { useState } from "react";
 import { Stream } from "../types/stream";
 import { getExportCsvUrl, ListStreamsFilters } from "../services/api";
 import { StreamTimeline } from "./StreamTimeline";
+import { FilterBar } from "./FilterBar";
+import { getHealthBadges } from "../utils/streamHealthBadges";
+import { CopyableAddress } from "./CopyableAddress";
 
 
 interface StreamsTableProps {
@@ -38,8 +41,13 @@ function formatTimestamp(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
 
-
-
+export function StreamsTable({
+  streams,
+  filters,
+  onFiltersChange,
+  onCancel,
+  onEditStartTime,
+}: StreamsTableProps) {
   const exportUrl = getExportCsvUrl(filters as Record<string, string>);
 
   const header = (
@@ -67,7 +75,7 @@ function formatTimestamp(unixSeconds: number): string {
   return (
     <div className="card">
       {header}
-      {/* <FilterBar filters={filters} onChange={onFiltersChange} /> */}
+      <FilterBar filters={filters} onChange={onFiltersChange} />
 
       {streams.length === 0 ? (
         <p className="muted">No streams match your filters.</p>
