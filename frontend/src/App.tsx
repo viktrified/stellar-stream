@@ -55,7 +55,10 @@ function App() {
   const [issues, setIssues] = useState<OpenIssue[]>([]);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [editingStream, setEditingStream] = useState<Stream | null>(null);
+  const [editingStream, setEditingStream] = useState<{
+    stream: Stream;
+    triggerRef: React.RefObject<HTMLButtonElement | null>;
+  } | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
 
 
@@ -214,8 +217,9 @@ function App() {
               filters={filters}
               onFiltersChange={setFilters}
               onCancel={handleCancel}
-              onEditStartTime={(stream) => setEditingStream(stream)}
-              onViewDetail={openStream}
+              onEditStartTime={(stream, triggerRef) =>
+                setEditingStream({ stream, triggerRef })
+              }
             />
           </section>
 
@@ -229,7 +233,8 @@ function App() {
           {/* Edit start-time modal — only rendered when a stream is being edited */}
           {editingStream && (
             <EditStartTimeModal
-              stream={editingStream}
+              stream={editingStream.stream}
+              triggerRef={editingStream.triggerRef}
               onConfirm={handleUpdateStartTime}
               onClose={() => setEditingStream(null)}
             />
