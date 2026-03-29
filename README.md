@@ -116,19 +116,35 @@ Error:
 
 ### `GET /api/recipients/:accountId/streams`
 Purpose:
-- Fetch all streams for a specific recipient account
+- Fetch all streams for a specific recipient account with optional filtering, search, and pagination
 
 Path parameters:
 - `accountId: string` (Stellar account ID starting with G, exactly 56 characters)
 
+Query params (optional):
+- `status: scheduled | active | completed | canceled`
+- `sender: string` (exact sender match, case-insensitive)
+- `asset: string` (exact asset code match, case-insensitive)
+- `q: string` (general search term - searches stream ID, sender, recipient, and asset code, case-insensitive)
+- `page: number` (integer `>= 1`)
+- `limit: number` (integer `1..100`)
+
+Pagination behavior:
+- If both `page` and `limit` are omitted, legacy mode applies and all matching rows are returned.
+- If either `page` or `limit` is provided, pagination mode applies with defaults `page=1` and `limit=20`.
+
 Validation:
 - Account ID must be a valid Stellar account ID format
+- Invalid `status`, `page`, or `limit` returns `400`
 
 Response:
 - `data: Stream[]` (includes computed `progress` for each stream)
+- `total: number` (filtered count before pagination)
+- `page: number` (applied page)
+- `limit: number` (applied page size)
 
 Error:
-- `400` if account ID is invalid
+- `400` if account ID or query parameters are invalid
 
 ### `GET /api/assets`
 Purpose:

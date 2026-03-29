@@ -545,21 +545,80 @@ export const swaggerDocument = {
     "/api/recipients/{accountId}/streams": {
       get: {
         summary: "Get recipient streams",
-        description: "Retrieves all streams for a specific recipient.",
+        description: "Retrieves all streams for a specific recipient with optional filtering, search, and pagination.",
         parameters: [
           {
             name: "accountId",
             in: "path",
             required: true,
-            description: "The Stellar account ID of the recipient.",
+            description: "The Stellar account ID of the recipient (starts with G, exactly 56 characters).",
             schema: {
               type: "string",
+              pattern: "^G[A-Z2-7]{55}$",
+            },
+          },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            description: "Filter by stream status.",
+            schema: {
+              type: "string",
+              enum: ["scheduled", "active", "completed", "canceled"],
+            },
+          },
+          {
+            name: "sender",
+            in: "query",
+            required: false,
+            description: "Filter by sender account ID (case-insensitive).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "asset",
+            in: "query",
+            required: false,
+            description: "Filter by asset code (case-insensitive).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "q",
+            in: "query",
+            required: false,
+            description: "Search term for stream ID, sender, recipient, or asset code (case-insensitive partial match).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "page",
+            in: "query",
+            required: false,
+            description: "Page number for pagination (defaults to 1).",
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            description: "Number of items per page (defaults to 20, max 100). If both page and limit are omitted, all results are returned.",
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
             },
           },
         ],
         responses: {
           "200": {
-            description: "A list of streams for the recipient.",
+            description: "A paginated list of streams for the recipient with progress data.",
             content: {
               "application/json": {
                 schema: {
@@ -571,13 +630,24 @@ export const swaggerDocument = {
                         $ref: "#/components/schemas/Stream",
                       },
                     },
+                    total: {
+                      type: "integer",
+                      description: "Total number of streams matching the filters (before pagination).",
+                    },
+                    page: {
+                      type: "integer",
+                      description: "Current page number.",
+                    },
+                    limit: {
+                      type: "integer",
+                      description: "Number of items per page.",
+                    },
                   },
                 },
               },
             },
           },
-          "404": {
-            description: "Stream not found.",
+
             content: {
               "application/json": {
                 schema: {

@@ -22,6 +22,8 @@ import {
   getStream,
   initSoroban,
   listStreams,
+  listStreamsByRecipient,
+  listStreamsBySender,
   StreamStatus,
   syncStreams,
   updateStreamStartAt,
@@ -293,15 +295,63 @@ app.get("/api/recipients/:accountId/streams", (req: Request, res: Response) => {
   }
 
   const accountId = parsedParams.data.accountId;
+
+  const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    sendValidationError(res, parsedQuery.error.issues);
+    return;
+  }
+  const query = parsedQuery.data;
   
-  let data = listStreams()
-    .filter((stream) => stream.recipient.toLowerCase() === accountId.toLowerCase())
+  let data = listStreamsByRecipient(accountId)
     .map((stream) => ({
       ...stream,
       progress: calculateProgress(stream),
     }));
 
-  res.json({ data });
+  // Apply filters
+  if (query.status) {
+    data = data.filter((stream) => stream.progress.status === query.status);
+  }
+  if (query.sender) {
+    data = data.filter(
+      (stream) => stream.sender.toLowerCase() === query.sender!.toLowerCase(),
+    );
+  }
+  if (query.asset) {
+    data = data.filter(
+      (stream) => stream.assetCode.toLowerCase() === query.asset!.toLowerCase(),
+    );
+  }
+  if (query.q && query.q.length > 0) {
+    const searchTerm = query.q.toLowerCase();
+    data = data.filter((stream) => {
+      return (
+        stream.id.toLowerCase().includes(searchTerm) ||
+        stream.sender.toLowerCase().includes(searchTerm) ||
+        stream.recipient.toLowerCase().includes(searchTerm) ||
+        stream.assetCode.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
+
+  // Apply pagination
+  const hasPage = req.query.page !== undefined;
+  const hasLimit = req.query.limit !== undefined;
+
+  const total = data.length;
+  const page = query.page ?? PAGINATION_DEFAULT_PAGE;
+  const limit = !hasPage && !hasLimit ? total : (query.limit ?? PAGINATION_DEFAULT_LIMIT);
+
+  const offset = (page - 1) * limit;
+  const paginatedData = data.slice(offset, offset + limit);
+
+  res.json({
+    data: paginatedData,
+    total,
+    page,
+    limit,
+  });
 });
 
 app.get("/api/senders/:accountId/streams", (req: Request, res: Response) => {
@@ -323,8 +373,7 @@ app.get("/api/senders/:accountId/streams", (req: Request, res: Response) => {
   }
   const query = parsedQuery.data;
 
-  let data = listStreams()
-    .filter((stream) => stream.sender.toLowerCase() === accountId.toLowerCase())
+  let data = listStreamsBySender(accountId)
     .map((stream) => ({
       ...stream,
       progress: calculateProgress(stream),
