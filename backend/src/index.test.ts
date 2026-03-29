@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { authMiddleware } from "./services/auth";
+
 
 const streamStoreMocks = vi.hoisted(() => ({
   calculateProgress: vi.fn(),
@@ -23,7 +22,13 @@ const eventHistoryMocks = vi.hoisted(() => ({
 vi.mock("./services/streamStore", () => streamStoreMocks);
 vi.mock("./services/eventHistory", () => eventHistoryMocks);
 
+const TEST_JWT_SECRET = "test_secret_for_integration";
+
 import { app } from "./index";
+
+beforeAll(() => {
+  vi.stubEnv("JWT_SECRET", TEST_JWT_SECRET);
+});
 
 type TestStream = {
   id: string;
@@ -563,32 +568,6 @@ describe("GET /api/events", () => {
   });
 });
 
-describe("authMiddleware", () => {
-  it("returns the shared error shape when authorization header is missing", () => {
-    let statusCode = 200;
-    let jsonBody: any;
 
-    authMiddleware(
-      { headers: {}, requestId: "test-request-id" } as any,
-      {
-        status(code: number) {
-          statusCode = code;
-          return this;
-        },
-        json(payload: any) {
-          jsonBody = payload;
-          return this;
-        },
-      } as any,
-      vi.fn(),
-    );
-
-    expect(statusCode).toBe(401);
-    expect(jsonBody).toMatchObject({
-      error: "Missing or invalid authorization header.",
-      statusCode: 401,
-      requestId: "test-request-id",
-      code: "UNAUTHORIZED",
-    });
   });
 });

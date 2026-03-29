@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CreateStreamForm } from "./components/CreateStreamForm";
 import { EditStartTimeModal } from "./components/EditStartTimeModal";
 import { IssueBacklog } from "./components/IssueBacklog";
 import { RecipientDashboard } from "./components/RecipientDashboard";
 import { StreamsTable } from "./components/StreamsTable";
+
 import { StreamMetricsChart } from "./components/StreamMetricsChart";
 import { WalletButton } from "./components/WalletButton";
 import { StreamTimeline } from "./components/StreamTimeline";
@@ -18,7 +19,7 @@ import { OpenIssue, Stream } from "./types/stream";
 import { useMetricsHistory } from "./hooks/useMetricsHistory";
 import { useUrlFilters } from "./hooks/useUrlFilters";
 
-type ViewMode = "dashboard" | "recipient";
+type ViewMode = "dashboard" | "recipient" | "sender";
 
 // Derive a user-friendly hint string for global (non-form) errors.
 function describeGlobalError(raw: string): string {
@@ -44,8 +45,11 @@ function App() {
   const {
     view: viewMode,
     filters,
+    streamId: detailStreamId,
     setView: setViewMode,
     setFilters,
+    openStream,
+    closeStream,
   } = useUrlFilters();
   const [streams, setStreams] = useState<Stream[]>([]);
   const [issues, setIssues] = useState<OpenIssue[]>([]);
@@ -56,6 +60,8 @@ function App() {
     triggerRef: React.RefObject<HTMLButtonElement | null>;
   } | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+
 
 
   const metrics = useMemo(() => {
@@ -117,14 +123,7 @@ function App() {
     }
   }
 
-  async function handleUpdateStartTime(
-    streamId: string,
-    newStartAt: number,
-  ): Promise<void> {
-    await updateStreamStartAt(streamId, newStartAt);
-    const data = await listStreams(filters);
-    setStreams(data);
-  }
+
 
   return (
     <div className="app-shell">
@@ -152,6 +151,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={`app-nav-link ${viewMode === "sender" ? "app-nav-link--active" : ""}`}
+          onClick={() => setViewMode("sender")}
+        >
+          Sender dashboard
+        </button>
+        <button
+          type="button"
           className={`app-nav-link ${viewMode === "recipient" ? "app-nav-link--active" : ""}`}
           onClick={() => setViewMode("recipient")}
         >
@@ -159,7 +165,12 @@ function App() {
         </button>
       </nav>
 
-      {viewMode === "recipient" ? (
+      {viewMode === "sender" ? (
+        <SenderDashboard 
+          senderAddress={wallet.address} 
+          onEditStartTime={(stream) => setEditingStream(stream)}
+        />
+      ) : viewMode === "recipient" ? (
         <RecipientDashboard recipientAddress={wallet.address} />
       ) : (
         <>
@@ -233,6 +244,15 @@ function App() {
               triggerRef={editingStream.triggerRef}
               onConfirm={handleUpdateStartTime}
               onClose={() => setEditingStream(null)}
+            />
+          )}
+
+          {/* Stream detail drawer — URL-driven via ?streamId= */}
+          {detailStreamId && (
+            <StreamDetailDrawer
+              streamId={detailStreamId}
+              onClose={closeStream}
+              onCancel={handleCancel}
             />
           )}
         </>

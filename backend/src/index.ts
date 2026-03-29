@@ -10,6 +10,7 @@ import {
   sendValidationError,
 } from "./apiErrors";
 import { swaggerDocument } from "./swagger";
+
 import {
   countAllEvents,
   getAllEvents,
@@ -26,10 +27,18 @@ import {
   getStream,
   initSoroban,
   listStreams,
+  listStreamsByRecipient,
+  listStreamsBySender,
   StreamStatus,
   syncStreams,
   updateStreamStartAt,
 } from "./services/streamStore";
+import {
+  getGlobalEvents,
+  countAllEvents,
+  getStreamHistory,
+  getAllEvents,
+} from "./services/eventHistory";
 import {
   authMiddleware,
   generateChallenge,
@@ -43,6 +52,8 @@ import {
   streamIdSchema,
   updateStreamStartAtSchema,
 } from "./validation/schemas";
+import { validateEnv } from "./config/validateEnv";
+
 
 
 const STREAM_STATUSES: StreamStatus[] = [
@@ -270,7 +281,11 @@ app.get("/api/streams/:id", (req: Request, res: Response) => {
     sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
     return;
   }
-  res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+
+  res.json({ data: { 
+    ...stream, 
+    progress: calculateProgress(stream) 
+  } });
 });
 
 app.get("/api/recipients/:accountId/streams", (req: Request, res: Response) => {
@@ -284,15 +299,63 @@ app.get("/api/recipients/:accountId/streams", (req: Request, res: Response) => {
   }
 
   const accountId = parsedParams.data.accountId;
+
+  const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    sendValidationError(res, parsedQuery.error.issues);
+    return;
+  }
+  const query = parsedQuery.data;
   
-  let data = listStreams()
-    .filter((stream) => stream.recipient.toLowerCase() === accountId.toLowerCase())
+  let data = listStreamsByRecipient(accountId)
     .map((stream) => ({
       ...stream,
       progress: calculateProgress(stream),
     }));
 
-  res.json({ data });
+  // Apply filters
+  if (query.status) {
+    data = data.filter((stream) => stream.progress.status === query.status);
+  }
+  if (query.sender) {
+    data = data.filter(
+      (stream) => stream.sender.toLowerCase() === query.sender!.toLowerCase(),
+    );
+  }
+  if (query.asset) {
+    data = data.filter(
+      (stream) => stream.assetCode.toLowerCase() === query.asset!.toLowerCase(),
+    );
+  }
+  if (query.q && query.q.length > 0) {
+    const searchTerm = query.q.toLowerCase();
+    data = data.filter((stream) => {
+      return (
+        stream.id.toLowerCase().includes(searchTerm) ||
+        stream.sender.toLowerCase().includes(searchTerm) ||
+        stream.recipient.toLowerCase().includes(searchTerm) ||
+        stream.assetCode.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
+
+  // Apply pagination
+  const hasPage = req.query.page !== undefined;
+  const hasLimit = req.query.limit !== undefined;
+
+  const total = data.length;
+  const page = query.page ?? PAGINATION_DEFAULT_PAGE;
+  const limit = !hasPage && !hasLimit ? total : (query.limit ?? PAGINATION_DEFAULT_LIMIT);
+
+  const offset = (page - 1) * limit;
+  const paginatedData = data.slice(offset, offset + limit);
+
+  res.json({
+    data: paginatedData,
+    total,
+    page,
+    limit,
+  });
 });
 
 app.get("/api/senders/:accountId/streams", (req: Request, res: Response) => {
@@ -314,8 +377,7 @@ app.get("/api/senders/:accountId/streams", (req: Request, res: Response) => {
   }
   const query = parsedQuery.data;
 
-  let data = listStreams()
-    .filter((stream) => stream.sender.toLowerCase() === accountId.toLowerCase())
+  let data = listStreamsBySender(accountId)
     .map((stream) => ({
       ...stream,
       progress: calculateProgress(stream),
@@ -377,10 +439,7 @@ app.get("/api/auth/challenge", (req: Request, res: Response) => {
     const challengeTransaction = generateChallenge(accountId.trim());
     res.json({ transaction: challengeTransaction });
   } catch (error: any) {
-    console.error("Failed to generate challenge:", error);
-    sendApiError(req, res, 500, "Failed to generate challenge transaction.", {
-      code: "INTERNAL_ERROR",
-    });
+
   }
 });
 
@@ -397,7 +456,7 @@ app.post("/api/auth/token", (req: Request, res: Response) => {
     const token = verifyChallengeAndIssueToken(transaction);
     res.json({ token });
   } catch (error: any) {
-    sendApiError(req, res, 401, error.message, { code: "UNAUTHORIZED" });
+
   }
 });
 
@@ -407,6 +466,13 @@ app.post("/api/streams", authMiddleware, async (req: Request, res: Response) => 
   );
   if (!parsedBody.success) {
     sendValidationError(req, res, parsedBody.error.issues);
+    return;
+  }
+
+  const user = (req as any).user;
+
+      requestId: req.requestId,
+    });
     return;
   }
 
@@ -437,13 +503,23 @@ app.post(
       return;
     }
 
+    const stream = getStream(parsedId.value);
+    if (!stream) {
+      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (stream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the sender can cancel this stream.",
+        requestId: req.requestId,
+      });
+      return;
+    }
+
     try {
-      const stream = await cancelStream(parsedId.value);
-      if (!stream) {
-        sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
-        return;
-      }
-      res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+
     } catch (error: any) {
       console.error("Failed to cancel stream:", error);
       const normalizedError = normalizeUnknownApiError(error, "Failed to cancel stream.");
@@ -464,24 +540,54 @@ app.patch(
       return;
     }
 
+    const existingStream = getStream(parsedId.value);
+    if (!existingStream) {
+      res
+        .status(404)
+        .json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (user && existingStream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the stream sender can update the start time.",
+        code: "FORBIDDEN",
+        requestId: req.requestId,
+      });
+      return;
+    }
+
     const parsedBody = updateStreamStartAtSchema.safeParse(req.body);
     if (!parsedBody.success) {
       sendValidationError(req, res, parsedBody.error.issues);
       return;
     }
 
-    const newStartAt = parsedBody.data.startAt;
-    if (newStartAt <= Math.floor(Date.now() / 1000)) {
-      sendApiError(req, res, 400, "startAt must be in the future.", {
-        code: "VALIDATION_ERROR",
-        details: [{ field: "startAt", message: "startAt must be in the future." }],
+    const stream = getStream(parsedId.value);
+    if (!stream) {
+      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (stream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the sender can update the start time.",
+        requestId: req.requestId,
       });
       return;
     }
 
+    const now = Math.floor(Date.now() / 1000);
+    const newStartAt = parsedBody.data.startAt;
+
+      return;
+    }
+
     try {
-      const stream = updateStreamStartAt(parsedId.value, newStartAt);
-      res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+      const updatedStream = updateStreamStartAt(parsedId.value, newStartAt);
+      res.json({ data: { ...updatedStream, progress: calculateProgress(updatedStream) } });
     } catch (error: any) {
       const normalizedError = normalizeUnknownApiError(
         error,
@@ -550,77 +656,27 @@ app.get("/api/open-issues", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/events", (req: Request, res: Response) => {
-  const parsedQuery = listEventsQuerySchema.safeParse(req.query);
-  if (!parsedQuery.success) {
-    sendValidationError(req, res, parsedQuery.error.issues);
-    return;
-  }
-
-  const query = parsedQuery.data;
-  const hasPage = req.query.page !== undefined;
-  const hasLimit = req.query.limit !== undefined;
-
-  const eventType = query.eventType as Parameters<typeof getGlobalEvents>[2];
-  const total = countAllEvents(eventType);
-
-  const page = query.page ?? PAGINATION_DEFAULT_PAGE;
-  const limit =
-    !hasPage && !hasLimit ? total : (query.limit ?? PAGINATION_DEFAULT_LIMIT);
-
-  const offset = (page - 1) * limit;
-  const data = getGlobalEvents(limit === 0 ? 0 : limit, offset, eventType);
-
-  res.json({ data, total, page, limit });
-});
-
-app.use("/api", (req: Request, res: Response) => {
-  sendApiError(req, res, 404, "Route not found.", { code: "NOT_FOUND" });
-});
-
-app.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (res.headersSent) {
-    next(error);
-    return;
-  }
-
-  if (error instanceof SyntaxError && "body" in error) {
-    sendApiError(req, res, 400, "Malformed JSON request body.", {
-      code: "INVALID_JSON",
-    });
-    return;
-  }
-
-  console.error("Unhandled API error:", error);
-  const normalizedError = normalizeUnknownApiError(error, "Internal server error.");
-  sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
-    code: normalizedError.code ?? "INTERNAL_ERROR",
-  });
-});
 
 
+ 
 async function startServer() {
+  // ── Validate environment first — exits with code 1 on bad config ──────
+  const config = validateEnv();
+ 
   await initSoroban();
   await syncStreams();
-
+ 
   // Initialize and start event indexer
-  const rpcUrl = process.env.RPC_URL || "https://soroban-testnet.stellar.org:443";
-  const contractId = process.env.CONTRACT_ID;
-  const networkPassphrase = process.env.NETWORK_PASSPHRASE;
-
-  if (contractId) {
-    initIndexer(rpcUrl, contractId, networkPassphrase);
+  if (config.sorobanEnabled && config.contractId) {
+    initIndexer(config.rpcUrl, config.contractId, config.networkPassphrase);
     startIndexer(10000); // Poll every 10 seconds
-  } else {
-    console.warn("CONTRACT_ID not set, event indexer will not start");
   }
-
-
-  app.listen(port, () => {
-    console.log(`StellarStream API listening on http://localhost:${port}`);
+ 
+  app.listen(config.port, () => {
+    console.log(`StellarStream API listening on http://localhost:${config.port}`);
   });
 }
-
+ 
 if (require.main === module) {
   startServer().catch(console.error);
 }
