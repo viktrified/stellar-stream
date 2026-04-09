@@ -253,14 +253,40 @@ export const swaggerDocument = {
       },
       Error: {
         type: "object",
+        required: ["error", "statusCode"],
         properties: {
           error: {
             type: "string",
             example: "Stream not found.",
           },
+          statusCode: {
+            type: "integer",
+            example: 404,
+          },
           requestId: {
             type: "string",
             example: "req_123456789",
+          },
+          code: {
+            type: "string",
+            example: "NOT_FOUND",
+          },
+          details: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["field", "message"],
+              properties: {
+                field: {
+                  type: "string",
+                  example: "startAt",
+                },
+                message: {
+                  type: "string",
+                  example: "startAt must be in the future.",
+                },
+              },
+            },
           },
         },
       },
@@ -287,6 +313,33 @@ export const swaggerDocument = {
                     timestamp: {
                       type: "string",
                       example: "2024-05-22T10:06:40.000Z",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/assets": {
+      get: {
+        summary: "List allowed assets",
+        description: "Returns the normalized list of allowed asset codes.",
+        responses: {
+          "200": {
+            description: "Allowed assets list.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        example: "USDC",
+                      },
                     },
                   },
                 },
@@ -326,6 +379,24 @@ export const swaggerDocument = {
             in: "query",
             required: false,
             description: "Exact recipient account ID match.",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "asset",
+            in: "query",
+            required: false,
+            description: "Exact asset code match.",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "q",
+            in: "query",
+            required: false,
+            description: "General search term. Searches across stream ID, sender, recipient, and asset code (case-insensitive). Combines with other filters.",
             schema: {
               type: "string",
             },
@@ -412,7 +483,7 @@ export const swaggerDocument = {
                 $ref: "#/components/schemas/StreamInput",
               },
             },
-
+          },
         },
         responses: {
           "201": {
@@ -453,13 +524,244 @@ export const swaggerDocument = {
         },
       },
     },
-
+    "/api/streams/{id}": {
+      get: {
+        summary: "Get a specific stream",
+        description: "Retrieves a stream by its unique ID.",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "The unique ID of the stream.",
+            schema: {
+              type: "string",
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Stream data.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      $ref: "#/components/schemas/Stream",
+                    },
+                  },
                 },
               },
             },
           },
           "404": {
             description: "Stream not found.",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/Error",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/recipients/{accountId}/streams": {
+      get: {
+        summary: "Get recipient streams",
+        description: "Retrieves all streams for a specific recipient with optional filtering, search, and pagination.",
+        parameters: [
+          {
+            name: "accountId",
+            in: "path",
+            required: true,
+            description: "The Stellar account ID of the recipient (starts with G, exactly 56 characters).",
+            schema: {
+              type: "string",
+              pattern: "^G[A-Z2-7]{55}$",
+            },
+          },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            description: "Filter by stream status.",
+            schema: {
+              type: "string",
+              enum: ["scheduled", "active", "completed", "canceled"],
+            },
+          },
+          {
+            name: "sender",
+            in: "query",
+            required: false,
+            description: "Filter by sender account ID (case-insensitive).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "asset",
+            in: "query",
+            required: false,
+            description: "Filter by asset code (case-insensitive).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "q",
+            in: "query",
+            required: false,
+            description: "Search term for stream ID, sender, recipient, or asset code (case-insensitive partial match).",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "page",
+            in: "query",
+            required: false,
+            description: "Page number for pagination (defaults to 1).",
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            description: "Number of items per page (defaults to 20, max 100). If both page and limit are omitted, all results are returned.",
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "A paginated list of streams for the recipient with progress data.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "array",
+                      items: {
+                        $ref: "#/components/schemas/Stream",
+                      },
+                    },
+                    total: {
+                      type: "integer",
+                      description: "Total number of streams matching the filters (before pagination).",
+                    },
+                    page: {
+                      type: "integer",
+                      description: "Current page number.",
+                    },
+                    limit: {
+                      type: "integer",
+                      description: "Number of items per page.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/Error",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/senders/{accountId}/streams": {
+      get: {
+        summary: "Get sender streams",
+        description: "Retrieves all streams for a specific sender with optional filtering and pagination.",
+        parameters: [
+          {
+            name: "accountId",
+            in: "path",
+            required: true,
+            description: "The Stellar account ID of the sender.",
+            schema: {
+              type: "string",
+            },
+          },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            description: "Filter by stream status.",
+            schema: {
+              type: "string",
+              enum: ["scheduled", "active", "completed", "canceled"],
+            },
+          },
+          {
+            name: "page",
+            in: "query",
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "A list of streams for the sender with pagination metadata.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "array",
+                      items: {
+                        $ref: "#/components/schemas/Stream",
+                      },
+                    },
+                    total: {
+                      type: "number",
+                      example: 10,
+                    },
+                    page: {
+                      type: "number",
+                      example: 1,
+                    },
+                    limit: {
+                      type: "number",
+                      example: 20,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid input or account ID.",
             content: {
               "application/json": {
                 schema: {

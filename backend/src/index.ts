@@ -1,11 +1,22 @@
 import cors from "cors";
 import { requestLogger } from "./middleware/requestLogger";
 import "dotenv/config";
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { z } from "zod";
+import {
+  normalizeUnknownApiError,
+  sendApiError,
+  sendValidationError,
+} from "./apiErrors";
 import { swaggerDocument } from "./swagger";
 
+import {
+  countAllEvents,
+  getAllEvents,
+  getGlobalEvents,
+  getStreamHistory,
+} from "./services/eventHistory";
 import { fetchOpenIssues } from "./services/openIssues";
 import { initIndexer, startIndexer } from "./services/indexer";
 import { startReconciliationJob } from "./services/reconciliationJob";
@@ -17,10 +28,18 @@ import {
   getStream,
   initSoroban,
   listStreams,
+  listStreamsByRecipient,
+  listStreamsBySender,
   StreamStatus,
   syncStreams,
   updateStreamStartAt,
 } from "./services/streamStore";
+import {
+  getGlobalEvents,
+  countAllEvents,
+  getStreamHistory,
+  getAllEvents,
+} from "./services/eventHistory";
 import {
   authMiddleware,
   generateChallenge,
@@ -29,11 +48,13 @@ import {
 import {
   createStreamPayloadWithAllowedAssetsSchema,
   listEventsQuerySchema,
+  recipientAccountIdSchema,
+  senderAccountIdSchema,
   streamIdSchema,
   updateStreamStartAtSchema,
-  zodIssuesToErrorMessage,
-  zodIssuesToValidationIssues,
 } from "./validation/schemas";
+import { validateEnv } from "./config/validateEnv";
+
 
 
 const STREAM_STATUSES: StreamStatus[] = [
@@ -65,6 +86,7 @@ const listStreamsQuerySchema = z.object({
   recipient: z.string().trim().optional(),
   sender: z.string().trim().optional(),
   asset: z.string().trim().optional(),
+  q: z.string().trim().optional(),
   page: z
     .coerce.number()
     .int("page must be an integer")
@@ -82,13 +104,6 @@ app.use(cors());
 app.use(requestLogger);
 app.use(express.json());
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
-function sendValidationError(res: Response, issues: z.ZodIssue[]) {
-  res.status(400).json({
-    error: zodIssuesToErrorMessage(issues),
-    details: zodIssuesToValidationIssues(issues),
-  });
-}
 
 function parseStreamId(streamIdRaw: unknown):
   | { ok: true; value: string }
@@ -121,10 +136,16 @@ app.get("/api/health", (_req: Request, res: Response) => {
   });
 });
 
+app.get("/api/assets", (_req: Request, res: Response) => {
+  res.json({
+    data: ALLOWED_ASSETS,
+  });
+});
+
 app.get("/api/streams", (req: Request, res: Response) => {
   const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
   if (!parsedQuery.success) {
-    sendValidationError(res, parsedQuery.error.issues);
+    sendValidationError(req, res, parsedQuery.error.issues);
     return;
   }
 
@@ -156,6 +177,17 @@ app.get("/api/streams", (req: Request, res: Response) => {
       (stream) => stream.assetCode.toLowerCase() === query.asset!.toLowerCase(),
     );
   }
+  if (query.q && query.q.length > 0) {
+    const searchTerm = query.q.toLowerCase();
+    data = data.filter((stream) => {
+      return (
+        stream.id.toLowerCase().includes(searchTerm) ||
+        stream.sender.toLowerCase().includes(searchTerm) ||
+        stream.recipient.toLowerCase().includes(searchTerm) ||
+        stream.assetCode.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
 
   const total = data.length;
   const page = query.page ?? PAGINATION_DEFAULT_PAGE;
@@ -178,7 +210,7 @@ app.get("/api/streams", (req: Request, res: Response) => {
 app.get("/api/events", (req: Request, res: Response) => {
   const parsedQuery = listEventsQuerySchema.safeParse(req.query);
   if (!parsedQuery.success) {
-    sendValidationError(res, parsedQuery.error.issues);
+    sendValidationError(req, res, parsedQuery.error.issues);
     return;
   }
 
@@ -241,22 +273,166 @@ app.get("/api/streams/export.csv", (req: Request, res: Response) => {
 app.get("/api/streams/:id", (req: Request, res: Response) => {
   const parsedId = parseStreamId(req.params.id);
   if (!parsedId.ok) {
-    sendValidationError(res, parsedId.issues);
+    sendValidationError(req, res, parsedId.issues);
     return;
   }
 
   const stream = getStream(parsedId.value);
   if (!stream) {
-    res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+    sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
     return;
   }
-  res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+
+  res.json({ data: { 
+    ...stream, 
+    progress: calculateProgress(stream) 
+  } });
+});
+
+app.get("/api/recipients/:accountId/streams", (req: Request, res: Response) => {
+  const parsedParams = recipientAccountIdSchema.safeParse({
+    accountId: req.params.accountId,
+  });
+  
+  if (!parsedParams.success) {
+    sendValidationError(req, res, parsedParams.error.issues);
+    return;
+  }
+
+  const accountId = parsedParams.data.accountId;
+
+  const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    sendValidationError(res, parsedQuery.error.issues);
+    return;
+  }
+  const query = parsedQuery.data;
+  
+  let data = listStreamsByRecipient(accountId)
+    .map((stream) => ({
+      ...stream,
+      progress: calculateProgress(stream),
+    }));
+
+  // Apply filters
+  if (query.status) {
+    data = data.filter((stream) => stream.progress.status === query.status);
+  }
+  if (query.sender) {
+    data = data.filter(
+      (stream) => stream.sender.toLowerCase() === query.sender!.toLowerCase(),
+    );
+  }
+  if (query.asset) {
+    data = data.filter(
+      (stream) => stream.assetCode.toLowerCase() === query.asset!.toLowerCase(),
+    );
+  }
+  if (query.q && query.q.length > 0) {
+    const searchTerm = query.q.toLowerCase();
+    data = data.filter((stream) => {
+      return (
+        stream.id.toLowerCase().includes(searchTerm) ||
+        stream.sender.toLowerCase().includes(searchTerm) ||
+        stream.recipient.toLowerCase().includes(searchTerm) ||
+        stream.assetCode.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
+
+  // Apply pagination
+  const hasPage = req.query.page !== undefined;
+  const hasLimit = req.query.limit !== undefined;
+
+  const total = data.length;
+  const page = query.page ?? PAGINATION_DEFAULT_PAGE;
+  const limit = !hasPage && !hasLimit ? total : (query.limit ?? PAGINATION_DEFAULT_LIMIT);
+
+  const offset = (page - 1) * limit;
+  const paginatedData = data.slice(offset, offset + limit);
+
+  res.json({
+    data: paginatedData,
+    total,
+    page,
+    limit,
+  });
+});
+
+app.get("/api/senders/:accountId/streams", (req: Request, res: Response) => {
+  const parsedParams = senderAccountIdSchema.safeParse({
+    accountId: req.params.accountId,
+  });
+
+  if (!parsedParams.success) {
+    sendValidationError(req, res, parsedParams.error.issues);
+    return;
+  }
+
+  const accountId = parsedParams.data.accountId;
+
+  const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    sendValidationError(req, res, parsedQuery.error.issues);
+    return;
+  }
+  const query = parsedQuery.data;
+
+  let data = listStreamsBySender(accountId)
+    .map((stream) => ({
+      ...stream,
+      progress: calculateProgress(stream),
+    }));
+
+  if (query.status) {
+    data = data.filter((stream) => stream.progress.status === query.status);
+  }
+  if (query.recipient) {
+    data = data.filter(
+      (stream) => stream.recipient.toLowerCase() === query.recipient!.toLowerCase(),
+    );
+  }
+  if (query.asset) {
+    data = data.filter(
+      (stream) => stream.assetCode.toLowerCase() === query.asset!.toLowerCase(),
+    );
+  }
+  if (query.q && query.q.length > 0) {
+    const searchTerm = query.q.toLowerCase();
+    data = data.filter((stream) => {
+      return (
+        stream.id.toLowerCase().includes(searchTerm) ||
+        stream.sender.toLowerCase().includes(searchTerm) ||
+        stream.recipient.toLowerCase().includes(searchTerm) ||
+        stream.assetCode.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
+
+  const hasPage = req.query.page !== undefined;
+  const hasLimit = req.query.limit !== undefined;
+
+  const total = data.length;
+  const page = query.page ?? PAGINATION_DEFAULT_PAGE;
+  const limit = !hasPage && !hasLimit ? total : (query.limit ?? PAGINATION_DEFAULT_LIMIT);
+
+  const offset = (page - 1) * limit;
+  const paginatedData = data.slice(offset, offset + limit);
+
+  res.json({
+    data: paginatedData,
+    total,
+    page,
+    limit,
+  });
 });
 
 app.get("/api/auth/challenge", (req: Request, res: Response) => {
   const accountId = req.query.accountId;
   if (typeof accountId !== "string" || !accountId.trim()) {
-    res.status(400).json({ error: "accountId query parameter is required." });
+    sendApiError(req, res, 400, "accountId query parameter is required.", {
+      code: "VALIDATION_ERROR",
+    });
     return;
   }
 
@@ -264,15 +440,16 @@ app.get("/api/auth/challenge", (req: Request, res: Response) => {
     const challengeTransaction = generateChallenge(accountId.trim());
     res.json({ transaction: challengeTransaction });
   } catch (error: any) {
-    console.error("Failed to generate challenge:", error);
-    res.status(500).json({ error: "Failed to generate challenge transaction." });
+
   }
 });
 
 app.post("/api/auth/token", (req: Request, res: Response) => {
   const transaction = req.body?.transaction;
   if (typeof transaction !== "string" || !transaction.trim()) {
-    res.status(400).json({ error: "transaction in body is required." });
+    sendApiError(req, res, 400, "transaction in body is required.", {
+      code: "VALIDATION_ERROR",
+    });
     return;
   }
 
@@ -280,7 +457,7 @@ app.post("/api/auth/token", (req: Request, res: Response) => {
     const token = verifyChallengeAndIssueToken(transaction);
     res.json({ token });
   } catch (error: any) {
-    res.status(401).json({ error: error.message, requestId: req.requestId });
+
   }
 });
 
@@ -289,7 +466,14 @@ app.post("/api/streams", authMiddleware, async (req: Request, res: Response) => 
     req.body,
   );
   if (!parsedBody.success) {
-    sendValidationError(res, parsedBody.error.issues);
+    sendValidationError(req, res, parsedBody.error.issues);
+    return;
+  }
+
+  const user = (req as any).user;
+
+      requestId: req.requestId,
+    });
     return;
   }
 
@@ -303,9 +487,9 @@ app.post("/api/streams", authMiddleware, async (req: Request, res: Response) => 
     });
   } catch (error: any) {
     console.error("Failed to create stream:", error);
-    res.status(500).json({
-      error: error.message || "Failed to create stream.",
-      requestId: req.requestId,
+    const normalizedError = normalizeUnknownApiError(error, "Failed to create stream.");
+    sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+      code: normalizedError.code ?? "INTERNAL_ERROR",
     });
   }
 });
@@ -316,20 +500,33 @@ app.post(
   async (req: Request, res: Response) => {
     const parsedId = parseStreamId(req.params.id);
     if (!parsedId.ok) {
-      sendValidationError(res, parsedId.issues);
+      sendValidationError(req, res, parsedId.issues);
+      return;
+    }
+
+    const stream = getStream(parsedId.value);
+    if (!stream) {
+      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (stream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the sender can cancel this stream.",
+        requestId: req.requestId,
+      });
       return;
     }
 
     try {
-      const stream = await cancelStream(parsedId.value);
-      if (!stream) {
-        res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
-        return;
-      }
-      res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+
     } catch (error: any) {
       console.error("Failed to cancel stream:", error);
-      res.status(500).json({ error: error.message || "Failed to cancel stream." });
+      const normalizedError = normalizeUnknownApiError(error, "Failed to cancel stream.");
+      sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+        code: normalizedError.code ?? "INTERNAL_ERROR",
+      });
     }
   },
 );
@@ -340,30 +537,66 @@ app.patch(
   (req: Request, res: Response) => {
     const parsedId = parseStreamId(req.params.id);
     if (!parsedId.ok) {
-      sendValidationError(res, parsedId.issues);
+      sendValidationError(req, res, parsedId.issues);
+      return;
+    }
+
+    const existingStream = getStream(parsedId.value);
+    if (!existingStream) {
+      res
+        .status(404)
+        .json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (user && existingStream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the stream sender can update the start time.",
+        code: "FORBIDDEN",
+        requestId: req.requestId,
+      });
       return;
     }
 
     const parsedBody = updateStreamStartAtSchema.safeParse(req.body);
     if (!parsedBody.success) {
-      sendValidationError(res, parsedBody.error.issues);
+      sendValidationError(req, res, parsedBody.error.issues);
       return;
     }
 
+    const stream = getStream(parsedId.value);
+    if (!stream) {
+      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      return;
+    }
+
+    const user = (req as any).user;
+    if (stream.sender !== user.accountId) {
+      res.status(403).json({
+        error: "Only the sender can update the start time.",
+        requestId: req.requestId,
+      });
+      return;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
     const newStartAt = parsedBody.data.startAt;
-    if (newStartAt <= Math.floor(Date.now() / 1000)) {
-      res.status(400).json({ error: "startAt must be in the future." });
+
       return;
     }
 
     try {
-      const stream = updateStreamStartAt(parsedId.value, newStartAt);
-      res.json({ data: { ...stream, progress: calculateProgress(stream) } });
+      const updatedStream = updateStreamStartAt(parsedId.value, newStartAt);
+      res.json({ data: { ...updatedStream, progress: calculateProgress(updatedStream) } });
     } catch (error: any) {
-      const statusCode = error.statusCode ?? 500;
-      res
-        .status(statusCode)
-        .json({ error: error.message || "Failed to update stream start time." });
+      const normalizedError = normalizeUnknownApiError(
+        error,
+        "Failed to update stream start time.",
+      );
+      sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+        code: normalizedError.code ?? "INTERNAL_ERROR",
+      });
     }
   },
 );
@@ -371,13 +604,13 @@ app.patch(
 app.get("/api/streams/:id/history", (req: Request, res: Response) => {
   const parsedId = parseStreamId(req.params.id);
   if (!parsedId.ok) {
-    sendValidationError(res, parsedId.issues);
+    sendValidationError(req, res, parsedId.issues);
     return;
   }
 
   const stream = getStream(parsedId.value);
   if (!stream) {
-    res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+    sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
     return;
   }
 
@@ -387,13 +620,13 @@ app.get("/api/streams/:id/history", (req: Request, res: Response) => {
 app.get("/api/streams/:id/snapshot", (req: Request, res: Response) => {
   const parsedId = parseStreamId(req.params.id);
   if (!parsedId.ok) {
-    sendValidationError(res, parsedId.issues);
+    sendValidationError(req, res, parsedId.issues);
     return;
   }
 
   const stream = getStream(parsedId.value);
   if (!stream) {
-    res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+    sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
     return;
   }
 
@@ -411,32 +644,32 @@ app.get("/api/streams/:id/snapshot", (req: Request, res: Response) => {
   });
 });
 
-app.get("/api/open-issues", async (_req: Request, res: Response) => {
+app.get("/api/open-issues", async (req: Request, res: Response) => {
   try {
     const data = await fetchOpenIssues();
     res.json({ data });
   } catch (error: any) {
     console.error("Failed to fetch open issues from proxy:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch open issues." });
+    const normalizedError = normalizeUnknownApiError(error, "Failed to fetch open issues.");
+    sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+      code: normalizedError.code ?? "INTERNAL_ERROR",
+    });
   }
 });
 
-app.get("/api/events", (_req: Request, res: Response) => {
-  res.json({ data: getAllEvents(50) });
-});
 
 
+ 
 async function startServer() {
+  // ── Validate environment first — exits with code 1 on bad config ──────
+  const config = validateEnv();
+ 
   await initSoroban();
   await syncStreams();
-
+ 
   // Initialize and start event indexer
-  const rpcUrl = process.env.RPC_URL || "https://soroban-testnet.stellar.org:443";
-  const contractId = process.env.CONTRACT_ID;
-  const networkPassphrase = process.env.NETWORK_PASSPHRASE;
-
-  if (contractId) {
-    initIndexer(rpcUrl, contractId, networkPassphrase);
+  if (config.sorobanEnabled && config.contractId) {
+    initIndexer(config.rpcUrl, config.contractId, config.networkPassphrase);
     startIndexer(10000); // Poll every 10 seconds
     startReconciliationJob(
       Number(process.env.RECONCILIATION_INTERVAL_MS ?? 60000),
@@ -444,13 +677,12 @@ async function startServer() {
   } else {
     console.warn("CONTRACT_ID not set, event indexer will not start");
   }
-
-
-  app.listen(port, () => {
-    console.log(`StellarStream API listening on http://localhost:${port}`);
+ 
+  app.listen(config.port, () => {
+    console.log(`StellarStream API listening on http://localhost:${config.port}`);
   });
 }
-
+ 
 if (require.main === module) {
   startServer().catch(console.error);
 }
