@@ -28,7 +28,7 @@ export function buildApiErrorResponse(
   return {
     error,
     statusCode,
-    requestId: req.requestId,
+    requestId: req.requestId, // Automatically included from requestLogger middleware
     code: options.code,
     details: options.details,
   };
@@ -62,6 +62,7 @@ export function sendError(
   req: Request,
   options: ApiErrorOptions = {}
 ) {
+  // Helper function for consistent error responses with requestId
   return res.status(status).json(buildApiErrorResponse(req, status, message, options));
 }
 
