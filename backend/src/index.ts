@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   normalizeUnknownApiError,
   sendApiError,
+  sendError,
   sendValidationError,
 } from "./apiErrors";
 import { swaggerDocument } from "./swagger";
@@ -34,12 +35,6 @@ import {
   syncStreams,
   updateStreamStartAt,
 } from "./services/streamStore";
-import {
-  getGlobalEvents,
-  countAllEvents,
-  getStreamHistory,
-  getAllEvents,
-} from "./services/eventHistory";
 import {
   authMiddleware,
   generateChallenge,
@@ -303,7 +298,7 @@ app.get("/api/recipients/:accountId/streams", (req: Request, res: Response) => {
 
   const parsedQuery = listStreamsQuerySchema.safeParse(req.query);
   if (!parsedQuery.success) {
-    sendValidationError(res, parsedQuery.error.issues);
+    sendValidationError(req, res, parsedQuery.error.issues);
     return;
   }
   const query = parsedQuery.data;
@@ -440,7 +435,11 @@ app.get("/api/auth/challenge", (req: Request, res: Response) => {
     const challengeTransaction = generateChallenge(accountId.trim());
     res.json({ transaction: challengeTransaction });
   } catch (error: any) {
-
+    console.error("Failed to generate challenge:", error);
+    const normalizedError = normalizeUnknownApiError(error, "Failed to generate challenge.");
+    sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+      code: normalizedError.code ?? "INTERNAL_ERROR",
+    });
   }
 });
 
@@ -457,7 +456,11 @@ app.post("/api/auth/token", (req: Request, res: Response) => {
     const token = verifyChallengeAndIssueToken(transaction);
     res.json({ token });
   } catch (error: any) {
-
+    console.error("Failed to verify challenge:", error);
+    const normalizedError = normalizeUnknownApiError(error, "Failed to verify challenge.");
+    sendApiError(req, res, normalizedError.statusCode, normalizedError.message, {
+      code: normalizedError.code ?? "INTERNAL_ERROR",
+    });
   }
 });
 
@@ -472,7 +475,9 @@ app.post("/api/streams", authMiddleware, async (req: Request, res: Response) => 
 
   const user = (req as any).user;
 
-      requestId: req.requestId,
+  if (!user) {
+    sendApiError(req, res, 401, "Authentication required.", {
+      code: "UNAUTHORIZED",
     });
     return;
   }
@@ -506,21 +511,21 @@ app.post(
 
     const stream = getStream(parsedId.value);
     if (!stream) {
-      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
       return;
     }
 
     const user = (req as any).user;
     if (stream.sender !== user.accountId) {
-      res.status(403).json({
-        error: "Only the sender can cancel this stream.",
-        requestId: req.requestId,
+      sendApiError(req, res, 403, "Only the sender can cancel this stream.", {
+        code: "FORBIDDEN",
       });
       return;
     }
 
     try {
-
+      const canceledStream = cancelStream(parsedId.value);
+      res.json({ data: { ...canceledStream, progress: calculateProgress(canceledStream) } });
     } catch (error: any) {
       console.error("Failed to cancel stream:", error);
       const normalizedError = normalizeUnknownApiError(error, "Failed to cancel stream.");
@@ -543,18 +548,14 @@ app.patch(
 
     const existingStream = getStream(parsedId.value);
     if (!existingStream) {
-      res
-        .status(404)
-        .json({ error: "Stream not found.", requestId: req.requestId });
+      sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
       return;
     }
 
     const user = (req as any).user;
     if (user && existingStream.sender !== user.accountId) {
-      res.status(403).json({
-        error: "Only the stream sender can update the start time.",
+      sendApiError(req, res, 403, "Only stream sender can update the start time.", {
         code: "FORBIDDEN",
-        requestId: req.requestId,
       });
       return;
     }
@@ -567,15 +568,14 @@ app.patch(
 
     const stream = getStream(parsedId.value);
     if (!stream) {
-      res.status(404).json({ error: "Stream not found.", requestId: req.requestId });
+      sendApiError(req, res, 404, "Stream not found.", { code: "NOT_FOUND" });
       return;
     }
 
-    const user = (req as any).user;
-    if (stream.sender !== user.accountId) {
-      res.status(403).json({
-        error: "Only the sender can update the start time.",
-        requestId: req.requestId,
+    const currentUser = (req as any).user;
+    if (currentUser && stream.sender !== currentUser.accountId) {
+      sendApiError(req, res, 403, "Only the sender can update the start time.", {
+        code: "FORBIDDEN",
       });
       return;
     }
@@ -583,6 +583,10 @@ app.patch(
     const now = Math.floor(Date.now() / 1000);
     const newStartAt = parsedBody.data.startAt;
 
+    if (newStartAt < now) {
+      sendApiError(req, res, 400, "Start time cannot be in the past.", {
+        code: "INVALID_START_TIME",
+      });
       return;
     }
 

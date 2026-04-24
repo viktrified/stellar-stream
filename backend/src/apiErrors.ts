@@ -55,6 +55,16 @@ export function sendValidationError(
   });
 }
 
+export function sendError(
+  res: Response,
+  status: number,
+  message: string,
+  req: Request,
+  options: ApiErrorOptions = {}
+) {
+  return res.status(status).json(buildApiErrorResponse(req, status, message, options));
+}
+
 export function normalizeUnknownApiError(
   error: unknown,
   fallbackMessage: string,
