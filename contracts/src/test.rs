@@ -567,3 +567,34 @@ fn test_transfer_stream_accrues_to_new_recipient() {
     let token_client = token::Client::new(&env, &token);
     assert_eq!(token_client.balance(&new_recipient), 400);
 }
+
+#[test]
+#[should_panic(expected = "amount exceeds claimable")]
+fn test_claim_rapid_succession_prevents_double_pay() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, StellarStreamContract);
+    let client = StellarStreamContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    let token_admin = token::StellarAssetClient::new(&env, &token);
+    token_admin.mint(&sender, &1000);
+
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1000, &0, &1000, &None);
+
+    // Advance ledger to 100% vested
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    // Call claim for full vested amount — succeeds
+    let claimed = client.claim(&stream_id, &recipient, &1000);
+    assert_eq!(claimed, 1000);
+
+    // Total paid never exceeds total_amount (verified by checking balance)
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 1000);
+
+    // Attempt second claim for same amount — panics with 'amount exceeds claimable'
+    client.claim(&stream_id, &recipient, &1000);
+}
